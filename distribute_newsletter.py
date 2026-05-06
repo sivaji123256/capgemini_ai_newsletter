@@ -243,17 +243,76 @@ def render_insight_block(node: Any) -> str:
     """
 
 
+def wrap_story_card(
+    title_html: str,
+    combined_html: str,
+    story_sections: str,
+    source_html: str,
+    badge_html: str = "",
+) -> str:
+    return f"""
+    <tr>
+      <td style="padding:0 0 20px 0;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+          style="width:100%;background:#ffffff;border:1px solid #dbe5ef;">
+          <tr>
+            <td style="padding:0 28px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:96px;">
+                <tr><td height="4" bgcolor="#0a66c2" style="height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 28px 24px 28px;">
+              <div style="padding:0 0 8px 0;">{badge_html}</div>
+              <div style="font-size:23px;line-height:1.3;font-weight:700;color:#0b3d78;text-align:left;padding:0 0 10px 0;">
+                {title_html}
+              </div>
+              {combined_html}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                {story_sections}
+                {source_html}
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    """
+
+
+def wrap_section(title: str, body_html: str) -> str:
+    return f"""
+    <tr>
+      <td style="padding:0 0 24px 0;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0 0 18px 0;">
+          <tr>
+            <td bgcolor="#0b3d78" style="background:#0b3d78;padding:12px 16px;">
+              <div style="font-size:22px;line-height:1.25;font-weight:700;color:#ffffff;">
+                {escape_html(title)}
+              </div>
+            </td>
+          </tr>
+        </table>
+        {body_html}
+      </td>
+    </tr>
+    """
+
+
 def render_email_safe_html(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
-    page_title = text_of(soup.find("h1")) or "Capgemini Weekly AI Pulse"
-    issue_time = text_of(soup.find("time"))
+    page_title = text_of(soup.find("h1")) or text_of(soup.find("title")) or "Capgemini Weekly AI Pulse"
+    issue_time = (
+        text_of(soup.find("time"))
+        or text_of(soup.select_one(".issue-date"))
+        or text_of(soup.select_one(".date"))
+    )
 
-    exec_brief_items = [
-        text_of(li)
-        for li in soup.select(".exec-brief li")
-        if text_of(li)
-    ]
+    exec_brief_items = [text_of(li) for li in soup.select(".exec-brief li") if text_of(li)]
+    if not exec_brief_items:
+        exec_brief_items = [text_of(li) for li in soup.select(".executive-brief li") if text_of(li)]
 
     section_blocks: list[str] = []
     for section in soup.select("section.editorial-section"):
@@ -359,59 +418,146 @@ def render_email_safe_html(html: str) -> str:
                 story_sections += risk_block
 
             story_blocks.append(
-                f"""
-                <tr>
-                  <td style="padding:0 0 20px 0;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
-                      style="width:100%;background:#ffffff;border:1px solid #dbe5ef;">
-                      <tr>
-                        <td style="padding:0 28px;">
-                          <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:96px;">
-                            <tr><td height="4" bgcolor="#0a66c2" style="height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
-                          </table>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style="padding:22px 28px 24px 28px;">
-                          <div style="padding:0 0 8px 0;">{badge_html}</div>
-                          <div style="font-size:23px;line-height:1.3;font-weight:700;color:#0b3d78;text-align:left;padding:0 0 10px 0;">
-                            {title_html}
-                          </div>
-                          {combined_html}
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
-                            {story_sections}
-                            {source_html}
-                          </table>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-                """
+                wrap_story_card(
+                    title_html=title_html,
+                    combined_html=combined_html,
+                    story_sections=story_sections,
+                    source_html=source_html,
+                    badge_html=badge_html,
+                )
             )
 
         section_blocks.append(
-            f"""
-            <tr>
-              <td style="padding:0 0 24px 0;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0 0 18px 0;">
-                  <tr>
-                    <td bgcolor="#0b3d78" style="background:#0b3d78;padding:12px 16px;">
-                      <div style="font-size:22px;line-height:1.25;font-weight:700;color:#ffffff;">
-                        {escape_html(section_title)}
-                      </div>
-                    </td>
-                  </tr>
-                </table>
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
-                  {''.join(story_blocks)}
-                </table>
-              </td>
-            </tr>
-            """
+            wrap_section(
+                section_title,
+                (
+                    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+                    + "".join(story_blocks)
+                    + "</table>"
+                ),
+            )
         )
 
+    if not section_blocks:
+        signal_story_blocks: list[str] = []
+        for card in soup.select("#signal-radar .signal-card"):
+            category = text_of(card.select_one(".signal-category"))
+            title_text = text_of(card.select_one(".signal-title")) or text_of(card.find(["h3", "h4"]))
+            title_link = card.find("a", href=True)
+            title_html = escape_html(title_text)
+            if title_link and title_link.get("href"):
+                title_html = (
+                    f'<a href="{escape_html(title_link.get("href", "").strip())}" '
+                    'style="color:#0b3d78;text-decoration:none;">'
+                    f"{escape_html(title_text)}</a>"
+                )
+
+            chips = [text_of(chip) for chip in card.select(".chip") if text_of(chip)]
+            chip_text = " | ".join(chips[:3])
+            badge_html = ""
+            if chip_text:
+                badge_html = (
+                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="right">'
+                    '<tr><td bgcolor="#0a66c2" style="background:#0a66c2;color:#ffffff;'
+                    'font-size:12px;font-weight:700;line-height:1;padding:8px 12px;white-space:nowrap;">'
+                    f"{escape_html(chip_text)}"
+                    "</td></tr></table>"
+                )
+
+            body = trim_sentences(text_of(card.select_one(".signal-body")), 2)
+            action = trim_sentences(text_of(card.select_one(".signal-action")), 2)
+            summary_parts = [part for part in [category, body] if part]
+            combined_html = ""
+            if summary_parts:
+                combined_html = (
+                    '<div style="font-size:14px;line-height:1.6;color:#2a3d52;text-align:left;padding:0 0 10px 0;">'
+                    f"{escape_html(' - '.join(summary_parts))}"
+                    "</div>"
+                )
+
+            story_sections = ""
+            if action:
+                story_sections += f"""
+                <tr>
+                  <td style="padding:0 0 4px 0;">
+                    <div style="font-size:13px;line-height:1.58;color:#31465c;">
+                      <span style="font-weight:700;color:#1f4f7a;">Recommended action:</span>
+                      <span> {escape_html(action)}</span>
+                    </div>
+                  </td>
+                </tr>
+                """
+
+            source_link = card.select_one(".signal-source a[href]")
+            source_html = ""
+            if source_link and source_link.get("href"):
+                source_label = text_of(source_link) or "Source"
+                source_html = f"""
+                <tr>
+                  <td style="padding:6px 0 0 0;font-size:13px;line-height:1.5;color:#5a6b7d;">
+                    <strong style="color:#183b63;">Source:</strong>
+                    <a href="{escape_html(source_link.get('href', '').strip())}" style="color:#0a66c2;text-decoration:none;">{escape_html(source_label)}</a>
+                  </td>
+                </tr>
+                """
+
+            signal_story_blocks.append(
+                wrap_story_card(
+                    title_html=title_html,
+                    combined_html=combined_html,
+                    story_sections=story_sections,
+                    source_html=source_html,
+                    badge_html=badge_html,
+                )
+            )
+
+        if signal_story_blocks:
+            section_blocks.append(
+                wrap_section(
+                    "Weekly Signals",
+                    (
+                        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+                        + "".join(signal_story_blocks[:6])
+                        + "</table>"
+                    ),
+                )
+            )
+
+        editorial_section = soup.select_one("section.editorial[aria-labelledby='editorial-analysis-heading'], section.editorial")
+        if editorial_section:
+            insight_paras = [
+                trim_sentences(text_of(p), 2)
+                for p in editorial_section.select(".editorial-content p")
+                if text_of(p)
+            ]
+            if insight_paras:
+                insight_items = "".join(
+                    f'<li style="margin:0 0 10px 0;">{escape_html(item)}</li>'
+                    for item in insight_paras[:5]
+                )
+                section_blocks.append(
+                    wrap_section(
+                        text_of(editorial_section.find("h2")) or "Editorial Insight",
+                        (
+                            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+                            '<tr><td bgcolor="#eef6ff" style="background:#eef6ff;border:1px solid #cfe0f3;padding:14px 22px;">'
+                            '<ul style="margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:#174d82;">'
+                            + insight_items
+                            + "</ul></td></tr></table>"
+                        ),
+                    )
+                )
+
     boardroom_items = [text_of(li) for li in soup.select(".boardroom-questions li") if text_of(li)]
+    if not boardroom_items:
+        for dt_node in soup.select(".boardroom-list dt"):
+            question = text_of(dt_node)
+            answer = text_of(dt_node.find_next_sibling("dd"))
+            combined = question
+            if answer:
+                combined = f"{question} {answer}"
+            if combined:
+                boardroom_items.append(trim_sentences(combined, 2))
     boardroom_html = ""
     if boardroom_items:
         boardroom_items = boardroom_items[:4]
