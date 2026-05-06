@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+.crawl4ai/
+ai_news_collection_output/
+newsletter_output/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
+*.log
+sample email.pdf

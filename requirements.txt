@@ -1,0 +1,13 @@
+httpx
+feedparser
+parsel
+lxml
+scrapy
+crawl4ai
+scrapling
+scrapegraphai
+playwright
+psycopg[binary]
+openai
+python-dateutil
+beautifulsoup4
