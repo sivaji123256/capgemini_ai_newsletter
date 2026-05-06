@@ -300,6 +300,26 @@ def wrap_section(title: str, body_html: str) -> str:
     """
 
 
+def render_bullet_section(title: str, items: list[str], bg: str = "#eef6ff", border: str = "#cfe0f3", color: str = "#174d82") -> str:
+    if not items:
+        return ""
+    bullets = "".join(
+        f'<li style="margin:0 0 10px 0;">{escape_html(item)}</li>'
+        for item in items
+        if item
+    )
+    if not bullets:
+        return ""
+    body_html = (
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+        f'<tr><td bgcolor="{bg}" style="background:{bg};border:1px solid {border};padding:14px 22px;">'
+        f'<ul style="margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:{color};">'
+        + bullets
+        + "</ul></td></tr></table>"
+    )
+    return wrap_section(title, body_html)
+
+
 def render_email_safe_html(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
@@ -547,6 +567,91 @@ def render_email_safe_html(html: str) -> str:
                         ),
                     )
                 )
+
+    if not section_blocks:
+        main = soup.find("main") or soup.body or soup
+        generic_titles_seen: set[str] = set()
+        for heading in main.find_all("h2"):
+            title = text_of(heading)
+            normalized = title.lower().strip()
+            if not title:
+                continue
+            if normalized in {
+                "executive brief",
+                "boardroom questions",
+            }:
+                continue
+            if normalized in generic_titles_seen:
+                continue
+            generic_titles_seen.add(normalized)
+
+            section = heading.find_parent("section") or heading.parent
+            story_blocks: list[str] = []
+            subheads = section.find_all("h3")
+            if subheads:
+                for subhead in subheads[:6]:
+                    sub_title = text_of(subhead)
+                    sibling = subhead.next_sibling
+                    parts: list[str] = []
+                    source_html = ""
+                    while sibling:
+                        name = getattr(sibling, "name", None)
+                        if name == "h3":
+                            break
+                        if name == "p":
+                            text = trim_sentences(text_of(sibling), 2)
+                            if text:
+                                parts.append(text)
+                            link = sibling.find("a", href=True)
+                            if link and link.get("href") and not source_html:
+                                label = text_of(link) or "Source"
+                                source_html = f"""
+                                <tr>
+                                  <td style="padding:6px 0 0 0;font-size:13px;line-height:1.5;color:#5a6b7d;">
+                                    <strong style="color:#183b63;">Source:</strong>
+                                    <a href="{escape_html(link.get('href', '').strip())}" style="color:#0a66c2;text-decoration:none;">{escape_html(label)}</a>
+                                  </td>
+                                </tr>
+                                """
+                        sibling = sibling.next_sibling
+                    combined_html = ""
+                    if parts:
+                        combined_html = (
+                            '<div style="font-size:14px;line-height:1.6;color:#2a3d52;text-align:left;padding:0 0 10px 0;">'
+                            f"{escape_html(' '.join(parts[:2]))}"
+                            "</div>"
+                        )
+                    story_blocks.append(
+                        wrap_story_card(
+                            title_html=escape_html(sub_title),
+                            combined_html=combined_html,
+                            story_sections="",
+                            source_html=source_html,
+                            badge_html="",
+                        )
+                    )
+            if story_blocks:
+                section_blocks.append(
+                    wrap_section(
+                        title,
+                        (
+                            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+                            + "".join(story_blocks)
+                            + "</table>"
+                        ),
+                    )
+                )
+                continue
+
+            paragraph_items = [
+                trim_sentences(text_of(p), 2)
+                for p in section.find_all("p")
+                if text_of(p)
+            ]
+            if paragraph_items:
+                block = render_bullet_section(title, paragraph_items[:6])
+                if block:
+                    section_blocks.append(block)
 
     boardroom_items = [text_of(li) for li in soup.select(".boardroom-questions li") if text_of(li)]
     if not boardroom_items:
