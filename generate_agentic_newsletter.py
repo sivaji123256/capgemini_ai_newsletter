@@ -17,6 +17,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import psycopg
 from psycopg.rows import dict_row
@@ -215,6 +216,7 @@ def summarizer_agent(client: OpenAI, model: str, clusters: list[dict[str, Any]])
             "Do not replace companies, model names, products, versions, numbers, or technical claims with different ones.",
             "Do not add facts not clearly supported by factual_headline, factual_summary, or source_titles.",
             "If evidence is ambiguous, stay conservative and say less.",
+            "Produce factual_lede as 1-2 neutral sentences summarizing only the source-backed facts before any business interpretation.",
             "Focus on business meaning: adoption, cost, risk, competitive impact, and operating model impact.",
             "Keep each story concise and specific.",
             "Return JSON only.",
@@ -225,6 +227,7 @@ def summarizer_agent(client: OpenAI, model: str, clusters: list[dict[str, Any]])
                 {
                     "cluster_id": 1,
                     "executive_bullet": "short executive bullet under 18 words",
+                    "factual_lede": "1-2 sentence neutral source-grounded factual summary",
                     "why_it_matters": ["1-2 grounded bullets"],
                     "risk_or_watchout": "risk",
                     "recommended_action": "action",
@@ -253,6 +256,7 @@ def critic_agent(client: OpenAI, model: str, summaries: dict[str, Any]) -> dict[
             "Is the story relevant to businesses?",
             "Is the summary specific, useful, and non-generic?",
             "Does it stay within the facts provided by the source-grounded cluster input?",
+            "Is the factual_lede factual and clearly separated from interpretation?",
             "Does it avoid hype?",
             "Does it identify risk or action clearly?",
             "Should it be included, downgraded, merged, or removed?",
@@ -295,7 +299,39 @@ def render_html_newsletter(clusters: list[dict[str, Any]], summaries: dict[str, 
             continue
         if verdict.get("include") is False or verdict.get("factuality_ok") is False:
             continue
+        headline = (cluster.get("factual_headline") or "").strip()
+        source_name = (cluster.get("primary_source_name") or "").strip().lower()
+        source_summary = (cluster.get("primary_source_summary") or cluster.get("factual_summary") or "").strip()
+        if headline.lower().startswith("show hn:"):
+            continue
+        if source_name in {"hacker news", "reddit r/machinelearning", "reddit localllama"} and len(source_summary) < 80:
+            continue
         selected.append({"cluster": cluster, "brief": brief, "verdict": verdict})
+
+    def source_label(item: dict[str, Any]) -> str:
+        cluster = item["cluster"]
+        raw_name = (cluster.get("primary_source_name") or cluster.get("primary_source") or "").strip()
+        url = (cluster.get("primary_url") or "").strip()
+        if url:
+            domain = urlparse(url).netloc.lower().replace("www.", "")
+            mapping = {
+                "towardsdatascience.com": "Towards Data Science",
+                "langchain.com": "LangChain Blog",
+                "developer.nvidia.com": "NVIDIA Technical Blog",
+                "computing.co.uk": "Computing",
+                "semafor.com": "Semafor",
+                "marktechpost.com": "MarkTechPost",
+                "rishgupta.com": "Rish Gupta",
+                "technologyreview.com": "MIT Technology Review",
+                "techcrunch.com": "TechCrunch",
+                "zdnet.com": "ZDNet",
+            }
+            if domain in mapping:
+                return mapping[domain]
+            parts = [part.capitalize() for part in domain.split(".") if part not in {"com", "co", "uk", "org", "net", "io"}]
+            if parts:
+                return " ".join(parts)
+        return raw_name or "Source"
 
     def section_name(item: dict[str, Any]) -> str:
         cluster = item["cluster"]
@@ -338,9 +374,12 @@ def render_html_newsletter(clusters: list[dict[str, Any]], summaries: dict[str, 
             importance = (brief.get("importance") or "high").strip().title()
             badge = f"{importance} Priority"
             headline = cluster.get("factual_headline") or cluster.get("canonical_title") or "AI Story"
-            summary = cluster.get("factual_summary") or ""
+            summary = " ".join((brief.get("factual_lede") or "").split()) or cluster.get("factual_summary") or ""
+            if summary.strip().lower() == headline.strip().lower():
+                summary = cluster.get("primary_source_summary") or cluster.get("canonical_summary") or ""
+            summary = " ".join(str(summary).split())
             url = cluster.get("primary_url") or ""
-            source_name = cluster.get("primary_source_name") or cluster.get("primary_source") or "Source"
+            source_name = source_label(item)
 
             why_items = brief.get("why_it_matters") or []
             if isinstance(why_items, str):
@@ -399,9 +438,6 @@ def render_html_newsletter(clusters: list[dict[str, Any]], summaries: dict[str, 
         if item["brief"].get("boardroom_question")
     ]
     boardroom_html = "".join(f"<li>{escape_html(text)}</li>" for text in boardroom_items)
-
-    guidance = escape_html((critique.get("overall_editor_guidance") or "").strip())
-    guidance_html = f"<p class=\"editor-note\">{guidance}</p>" if guidance else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -519,11 +555,6 @@ def render_html_newsletter(clusters: list[dict[str, Any]], summaries: dict[str, 
     margin: 12px 0 0;
     color: #516579;
   }}
-  .editor-note {{
-    margin: 0 0 16px;
-    color: #5d6f82;
-    font-size: 0.95rem;
-  }}
   @media (max-width: 720px) {{
     .story-card-header {{ grid-template-columns: 1fr; }}
     .priority-badge {{ justify-self: start; }}
@@ -542,7 +573,6 @@ def render_html_newsletter(clusters: list[dict[str, Any]], summaries: dict[str, 
     <ul>{exec_html}</ul>
   </section>
 
-  {guidance_html}
   {''.join(section_blocks)}
 
   <section class="boardroom-questions">
