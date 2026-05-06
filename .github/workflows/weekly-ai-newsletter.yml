@@ -18,9 +18,23 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: ai_news
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d ai_news"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_news
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       NEWSLETTER_FROM_EMAIL: ${{ secrets.NEWSLETTER_FROM_EMAIL }}
       NEWSLETTER_FROM_NAME: ${{ secrets.NEWSLETTER_FROM_NAME }}
@@ -53,7 +67,6 @@ jobs:
       - name: Validate required secrets
         shell: bash
         run: |
-          test -n "$DATABASE_URL"
           test -n "$OPENAI_API_KEY"
 
       - name: Run weekly pipeline
