@@ -970,7 +970,7 @@ def render_email_newsletter(
             if url:
                 source_html = (
                     f'<div style="font-size:13px;line-height:1.5;color:#5a6b7d;padding-top:6px;">'
-                    f'<strong style="color:#183b63;">Sources:</strong> '
+                    f'<strong style="color:#183b63;">Learn more from the source:</strong> '
                     f'<a href="{escape_html(url)}" style="color:#0a66c2;text-decoration:none;">{escape_html(source_name)}</a>'
                     "</div>"
                 )

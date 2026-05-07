@@ -178,6 +178,7 @@ def trim_sentences(text: str, max_sentences: int = 2) -> str:
 def choose_story_brief(one_sentence: str, intro_parts: list[str]) -> str:
     one_sentence = " ".join(one_sentence.split())
     intro_text = " ".join(intro_parts[0].split()) if intro_parts else ""
+    intro_text = re.sub(r"\s*Sources?:\s*.*$", "", intro_text, flags=re.I).strip()
     if intro_text:
         return trim_sentences(intro_text, 1)
     return trim_sentences(one_sentence, 1)
@@ -389,7 +390,7 @@ def render_email_safe_html(html: str) -> str:
                 source_html = f"""
                 <tr>
                   <td style="padding:6px 0 0 0;font-size:13px;line-height:1.5;color:#5a6b7d;">
-                    <strong style="color:#183b63;">Sources:</strong> {joined}
+                    <strong style="color:#183b63;">Learn more from the source:</strong> {joined}
                   </td>
                 </tr>
                 """
@@ -515,7 +516,7 @@ def render_email_safe_html(html: str) -> str:
                 source_html = f"""
                 <tr>
                   <td style="padding:6px 0 0 0;font-size:13px;line-height:1.5;color:#5a6b7d;">
-                    <strong style="color:#183b63;">Source:</strong>
+                    <strong style="color:#183b63;">Learn more from the source:</strong>
                     <a href="{escape_html(source_link.get('href', '').strip())}" style="color:#0a66c2;text-decoration:none;">{escape_html(source_label)}</a>
                   </td>
                 </tr>
@@ -608,7 +609,7 @@ def render_email_safe_html(html: str) -> str:
                                 source_html = f"""
                                 <tr>
                                   <td style="padding:6px 0 0 0;font-size:13px;line-height:1.5;color:#5a6b7d;">
-                                    <strong style="color:#183b63;">Source:</strong>
+                                    <strong style="color:#183b63;">Learn more from the source:</strong>
                                     <a href="{escape_html(link.get('href', '').strip())}" style="color:#0a66c2;text-decoration:none;">{escape_html(label)}</a>
                                   </td>
                                 </tr>
