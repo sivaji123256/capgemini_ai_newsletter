@@ -77,6 +77,20 @@ AGGREGATOR_DOMAINS = {
     "www.reddit.com",
 }
 
+BUSINESS_RELEVANCE_WEIGHT = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    "irrelevant": 0,
+}
+
+IMPORTANCE_WEIGHT = {
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+}
+
 
 def connect() -> psycopg.Connection:
     load_local_env()
@@ -395,6 +409,19 @@ def apply_grounded_ledes(clusters: list[dict[str, Any]], grounded_output: dict[s
     return updated
 
 
+def merge_briefs(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[int, dict[str, Any]] = {}
+    for item in base.get("briefs", []):
+        cid = item.get("cluster_id")
+        if cid is not None:
+            merged[cid] = item
+    for item in extra.get("briefs", []):
+        cid = item.get("cluster_id")
+        if cid is not None:
+            merged[cid] = item
+    return {"briefs": [merged[cid] for cid in sorted(merged)]}
+
+
 def section_name_for_item(cluster: dict[str, Any], brief: dict[str, Any]) -> str:
     text = " ".join(
         [
@@ -434,9 +461,15 @@ def summarizer_agent(client: OpenAI, model: str, clusters: list[dict[str, Any]])
             "Do not add facts not clearly supported by factual_headline, factual_summary, or source_titles.",
             "If evidence is ambiguous, stay conservative and say less.",
             "Do not rewrite the factual story text. The factual headline and factual summary are immutable and will be rendered separately.",
-            "Focus on business meaning: adoption, cost, risk, competitive impact, and operating model impact.",
+            "Create a newsletter_title that is sharper and more engaging than the source title while preserving the exact factual meaning.",
+            "newsletter_title may improve phrasing, but must not change the company, model, product, version, number, or technical claim.",
+            "Focus on business meaning: adoption, cost, risk, competitive impact, operating model impact, integration impact, and governance impact.",
+            "Write from the perspective of a chief AI architect at Capgemini advising enterprise leaders.",
+            "Recommended action must be a concrete enterprise move, not a generic suggestion.",
+            "Risk / Watchout must describe the implementation, governance, data, security, operating model, or vendor risk if the story is acted on poorly or ignored.",
             "Avoid repeating the headline inside executive_bullet.",
-            "Avoid generic consultant language. Be concrete and concise.",
+            "Avoid generic consultant language. Be concrete, enterprise-focused, and concise.",
+            "Return exactly one brief for every cluster_id provided.",
             "Keep each story concise and specific.",
             "Return JSON only.",
         ],
@@ -445,6 +478,7 @@ def summarizer_agent(client: OpenAI, model: str, clusters: list[dict[str, Any]])
             "briefs": [
                 {
                     "cluster_id": 1,
+                    "newsletter_title": "improved but fact-preserving story title",
                     "executive_bullet": "short executive bullet under 18 words",
                     "why_it_matters": ["1-2 grounded bullets"],
                     "risk_or_watchout": "risk",
@@ -473,10 +507,13 @@ def critic_agent(client: OpenAI, model: str, summaries: dict[str, Any]) -> dict[
         "evaluation_dimensions": [
             "Is the story relevant to businesses?",
             "Is the summary specific, useful, and non-generic?",
+            "Is the newsletter_title sharper than the source title without changing the factual meaning?",
             "Does it stay within the facts provided by the source-grounded cluster input?",
             "Does it avoid hype?",
-            "Does it identify risk or action clearly?",
-            "Should it be included, downgraded, merged, or removed?",
+            "Does it identify enterprise risk or enterprise action clearly?",
+            "Is recommended_action concrete enough for enterprise architecture, operating model, governance, or rollout planning?",
+            "Is risk_or_watchout specific rather than generic?",
+            "Should it be included, downgraded, or removed?",
         ],
         "summaries": summaries,
         "output_schema": {
@@ -514,9 +551,10 @@ def reviser_agent(
         "requirements": [
             "Do not change cluster_id values.",
             "Do not rewrite factual_headline, factual_summary, companies, model names, versions, numbers, or technical claims.",
-            "Revise only executive_bullet, why_it_matters, risk_or_watchout, recommended_action, boardroom_question, importance, impact, risk_level, horizon, and category.",
+            "Revise only newsletter_title, executive_bullet, why_it_matters, risk_or_watchout, recommended_action, boardroom_question, importance, impact, risk_level, horizon, and category.",
             "Apply the critic required_edits precisely.",
             "If a story needs no edits, keep its existing interpretation unchanged.",
+            "Keep the enterprise-architecture lens strong and avoid generic action or risk phrasing.",
             "Return JSON only.",
         ],
         "clusters": clusters,
@@ -526,6 +564,7 @@ def reviser_agent(
             "briefs": [
                 {
                     "cluster_id": 1,
+                    "newsletter_title": "improved but fact-preserving story title",
                     "executive_bullet": "short executive bullet under 18 words",
                     "why_it_matters": ["1-2 grounded bullets"],
                     "risk_or_watchout": "risk",
@@ -573,10 +612,13 @@ def editor_agent(
                 "cluster_id": item["cluster"]["id"],
                 "factual_headline": item["cluster"]["factual_headline"],
                 "factual_summary": item["cluster"]["factual_summary"],
+                "newsletter_title": item["brief"].get("newsletter_title", ""),
                 "source_label": item["cluster"]["source_label"],
                 "executive_bullet": item["brief"].get("executive_bullet", ""),
                 "category": item["brief"].get("category", ""),
                 "importance": item["brief"].get("importance", ""),
+                "critic_score": item["verdict"].get("score", 0),
+                "business_relevance": item["verdict"].get("business_relevance", ""),
                 "boardroom_question": item["brief"].get("boardroom_question", ""),
                 "default_section": item["default_section"],
             }
@@ -636,7 +678,12 @@ def render_html_newsletter(
             brief = item["brief"]
             importance = (brief.get("importance") or "high").strip().title()
             badge = f"{importance} Priority"
-            headline = cluster.get("factual_headline") or cluster.get("canonical_title") or "AI Story"
+            headline = (
+                brief.get("newsletter_title")
+                or cluster.get("factual_headline")
+                or cluster.get("canonical_title")
+                or "AI Story"
+            )
             summary = " ".join(str(cluster.get("primary_source_summary") or "").split())
             if not summary:
                 summary = " ".join(str(cluster.get("factual_summary") or "").split())
@@ -906,6 +953,32 @@ def normalize_html_text(html: str) -> str:
     return html
 
 
+def ensure_complete_summaries(client: OpenAI, model: str, clusters: list[dict[str, Any]], summaries: dict[str, Any]) -> dict[str, Any]:
+    present_ids = {item.get("cluster_id") for item in summaries.get("briefs", []) if item.get("cluster_id") is not None}
+    missing = [cluster for cluster in clusters if cluster["id"] not in present_ids]
+    if not missing:
+        return summaries
+    extra = summarizer_agent(client, model, missing)
+    return merge_briefs(summaries, extra)
+
+
+def rank_selected_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        cluster = item["cluster"]
+        brief = item["brief"]
+        verdict = item["verdict"]
+        return (
+            -BUSINESS_RELEVANCE_WEIGHT.get(str(verdict.get("business_relevance") or "").lower(), 0),
+            -float(verdict.get("score") or 0.0),
+            -IMPORTANCE_WEIGHT.get(str(brief.get("importance") or "").lower(), 0),
+            -float(cluster.get("computed_ai_relevance_score") or 0.0),
+            -int(cluster.get("source_count") or 0),
+            int(cluster.get("id") or 0),
+        )
+
+    return sorted(items, key=sort_key)
+
+
 def enforce_issue_branding(html: str) -> str:
     today = dt.datetime.now().strftime("%B %d, %Y")
     html = re.sub(
@@ -979,6 +1052,7 @@ def main() -> int:
     grounded_clusters = apply_grounded_ledes(grounded_clusters, grounded_output)
     print(f"Grounder agent produced {len(grounded_output.get('grounded_stories', []))} factual ledes.")
     summaries = summarizer_agent(client, args.model, grounded_clusters)
+    summaries = ensure_complete_summaries(client, args.model, grounded_clusters, summaries)
     print(f"Summarizer agent produced {len(summaries.get('briefs', []))} briefs.")
     critique = critic_agent(client, args.model, summaries)
     print(f"Critic agent produced {len(critique.get('verdicts', []))} verdicts.")
@@ -1021,6 +1095,7 @@ def main() -> int:
             }
         )
 
+    selected = rank_selected_items(selected)
     editor_plan = editor_agent(client, args.model, selected)
     html = render_html_newsletter(selected, editor_plan)
     paths = save_outputs(html, grounded_output, summaries, critique, revised_summaries, editor_plan)

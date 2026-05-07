@@ -780,10 +780,29 @@ def ensure_schema(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
+def configured_recipients() -> list[dict[str, Any]]:
+    raw = os.environ.get("NEWSLETTER_RECIPIENTS", "").strip()
+    if not raw:
+        return DEFAULT_RECIPIENTS
+    emails = [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    rows: list[dict[str, Any]] = []
+    for email in emails:
+        org = "Capgemini" if email.lower().endswith("@capgemini.com") else "External"
+        rows.append({"email": email, "name": "", "organization": org, "segment": "primary"})
+    return rows
+
+
 def upsert_default_recipients(conn: psycopg.Connection) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    recipients = configured_recipients()
     with conn.cursor() as cur:
-        for recipient in DEFAULT_RECIPIENTS:
+        configured_emails = [recipient["email"] for recipient in recipients]
+        if configured_emails:
+            cur.execute(
+                "UPDATE newsletter_recipients SET is_active = FALSE WHERE email <> ALL(%s)",
+                (configured_emails,),
+            )
+        for recipient in recipients:
             cur.execute(
                 """
                 INSERT INTO newsletter_recipients (email, name, organization, segment, is_active)
