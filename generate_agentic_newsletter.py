@@ -901,8 +901,180 @@ def render_html_newsletter(
 """
 
 
+def render_email_newsletter(
+    items: list[dict[str, Any]],
+    editor_plan: dict[str, Any],
+) -> str:
+    today = dt.datetime.now().strftime("%B %d, %Y")
+    items_by_id = {item["cluster"]["id"]: item for item in items}
+    section_order = [
+        "Coding Agents and Governance",
+        "Inference Economics and Security",
+        "Operating Model and Edge Signals",
+    ]
+
+    exec_ids = [cid for cid in editor_plan.get("executive_cluster_ids", []) if cid in items_by_id][:3]
+    if not exec_ids:
+        exec_ids = [item["cluster"]["id"] for item in items[:3]]
+    exec_html = "".join(
+        f'<li style="margin:0 0 10px 0;">{escape_html(items_by_id[cid]["brief"].get("executive_bullet", ""))}</li>'
+        for cid in exec_ids
+        if items_by_id[cid]["brief"].get("executive_bullet")
+    )
+
+    section_blocks: list[str] = []
+    editor_sections = {section.get("name"): section.get("story_cluster_ids", []) for section in editor_plan.get("sections", [])}
+    for section in section_order:
+        story_ids = [cid for cid in editor_sections.get(section, []) if cid in items_by_id]
+        default_ids = [item["cluster"]["id"] for item in items if item["default_section"] == section]
+        for cid in default_ids:
+            if cid not in story_ids:
+                story_ids.append(cid)
+        if not story_ids:
+            continue
+
+        story_blocks: list[str] = []
+        for cid in story_ids:
+            item = items_by_id[cid]
+            cluster = item["cluster"]
+            brief = item["brief"]
+            importance = (brief.get("importance") or "high").strip().title()
+            badge_color = "#0a66c2" if importance == "High" else "#5f7ea3" if importance == "Medium" else "#89aecd"
+            badge = f"{importance} Priority"
+            headline = (
+                brief.get("newsletter_title")
+                or cluster.get("factual_headline")
+                or cluster.get("canonical_title")
+                or "AI Story"
+            )
+            summary = " ".join(str(cluster.get("primary_source_summary") or "").split())
+            if not summary:
+                summary = " ".join(str(cluster.get("factual_summary") or "").split())
+            if summary.strip().lower() == headline.strip().lower():
+                summary = " ".join(str(cluster.get("canonical_summary") or "").split())
+            if not summary:
+                summary = " ".join(str(cluster.get("factual_summary") or "").split())
+            url = cluster.get("primary_url") or ""
+            source_name = cluster.get("source_label") or "Source"
+            title_html = escape_html(headline)
+            if url:
+                title_html = f'<a href="{escape_html(url)}" style="color:#0b3d78;text-decoration:none;">{escape_html(headline)}</a>'
+
+            why_items = brief.get("why_it_matters") or []
+            if isinstance(why_items, str):
+                why_items = [why_items]
+            why_html = "".join(
+                f'<li style="margin:0 0 3px 0;">{escape_html(text)}</li>' for text in why_items[:2] if text
+            )
+            source_html = ""
+            if url:
+                source_html = (
+                    f'<div style="font-size:13px;line-height:1.5;color:#5a6b7d;padding-top:6px;">'
+                    f'<strong style="color:#183b63;">Sources:</strong> '
+                    f'<a href="{escape_html(url)}" style="color:#0a66c2;text-decoration:none;">{escape_html(source_name)}</a>'
+                    "</div>"
+                )
+
+            story_blocks.append(
+                f"""
+                <tr>
+                  <td style="padding:0 0 20px 0;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#ffffff;border:1px solid #dbe5ef;">
+                      <tr><td style="padding:0 28px;"><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:96px;"><tr><td height="4" bgcolor="#0a66c2" style="height:4px;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+                      <tr>
+                        <td style="padding:22px 28px 24px 28px;">
+                          <div style="padding:0 0 8px 0;"><table role="presentation" cellspacing="0" cellpadding="0" border="0" align="right"><tr><td bgcolor="{badge_color}" style="background:{badge_color};color:#ffffff;font-size:12px;font-weight:700;line-height:1;padding:8px 12px;white-space:nowrap;">{escape_html(badge)}</td></tr></table></div>
+                          <div style="font-size:23px;line-height:1.3;font-weight:700;color:#0b3d78;text-align:left;padding:0 0 10px 0;">{title_html}</div>
+                          <div style="font-size:14px;line-height:1.6;color:#2a3d52;text-align:left;padding:0 0 10px 0;">{escape_html(summary)}</div>
+                          <div style="font-size:13px;line-height:1.58;color:#31465c;padding:0 0 4px 0;"><span style="font-weight:700;color:#4c647d;">Why it matters:</span><ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.55;color:#31465c;">{why_html}</ul></div>
+                          <div style="font-size:13px;line-height:1.58;color:#31465c;padding:0 0 4px 0;"><span style="font-weight:700;color:#1f4f7a;">Recommended action:</span> {escape_html((brief.get("recommended_action") or "").strip())}</div>
+                          <div style="font-size:13px;line-height:1.58;color:#31465c;padding:0 0 4px 0;"><span style="font-weight:700;color:#6f572d;">Risk / Watchout:</span> {escape_html((brief.get("risk_or_watchout") or "").strip())}</div>
+                          {source_html}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                """
+            )
+
+        section_blocks.append(
+            f"""
+            <tr>
+              <td style="padding:0 0 24px 0;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0 0 18px 0;">
+                  <tr><td bgcolor="#0b3d78" style="background:#0b3d78;padding:12px 16px;"><div style="font-size:22px;line-height:1.25;font-weight:700;color:#ffffff;">{escape_html(section)}</div></td></tr>
+                </table>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                  {''.join(story_blocks)}
+                </table>
+              </td>
+            </tr>
+            """
+        )
+
+    boardroom_ids = [cid for cid in editor_plan.get("boardroom_cluster_ids", []) if cid in items_by_id][:6]
+    if not boardroom_ids:
+        boardroom_ids = [item["cluster"]["id"] for item in items[:6]]
+    boardroom_html = "".join(
+        f'<li style="margin:0 0 12px 0;">{escape_html(items_by_id[cid]["brief"].get("boardroom_question", "").strip())}</li>'
+        for cid in boardroom_ids
+        if items_by_id[cid]["brief"].get("boardroom_question")
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Capgemini Weekly AI Pulse</title>
+</head>
+<body style="margin:0;padding:0;background:#e9eef5;font-family:Segoe UI,Arial,sans-serif;color:#1f2d3d;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#e9eef5;">
+    <tr>
+      <td align="center" style="padding:20px 12px 28px 12px;">
+        <table role="presentation" width="760" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:760px;max-width:760px;background:#ffffff;border:1px solid #ccd7e3;">
+          <tr>
+            <td bgcolor="#0b2f57" style="padding:28px 28px 18px 28px;text-align:center;background:#0b2f57;">
+              <div style="font-size:34px;line-height:1.2;font-weight:700;color:#ffffff;letter-spacing:0.02em;">Capgemini Weekly AI Pulse</div>
+              <div style="padding-top:8px;font-size:14px;line-height:1.4;color:#d5e4f5;">Issue Date: {escape_html(today)}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 22px 22px 22px;background:#ffffff;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                <tr>
+                  <td style="padding:0 0 28px 0;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                      <tr><td bgcolor="#0a66c2" style="background:#0a66c2;padding:12px 16px;"><div style="font-size:21px;line-height:1.25;font-weight:700;color:#ffffff;">Executive Brief</div></td></tr>
+                      <tr><td bgcolor="#eef6ff" style="background:#eef6ff;border:1px solid #cfe0f3;padding:14px 22px;"><ul style="margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:#174d82;">{exec_html}</ul></td></tr>
+                    </table>
+                  </td>
+                </tr>
+                {''.join(section_blocks)}
+                <tr>
+                  <td style="padding:0 0 8px 0;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;">
+                      <tr><td bgcolor="#0b3d78" style="background:#0b3d78;padding:12px 16px;"><div style="font-size:21px;line-height:1.25;font-weight:700;color:#ffffff;">Boardroom Questions</div></td></tr>
+                      <tr><td bgcolor="#eef4fb" style="background:#eef4fb;border:1px solid #cfdaea;padding:14px 20px;"><ol style="margin:0;padding-left:22px;font-size:14px;line-height:1.6;color:#27415d;">{boardroom_html}</ol></td></tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
 def save_outputs(
     html: str,
+    email_html: str,
     grounded_output: dict[str, Any],
     summaries: dict[str, Any],
     critique: dict[str, Any],
@@ -912,9 +1084,12 @@ def save_outputs(
     OUTPUT_DIR.mkdir(exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     html_path = OUTPUT_DIR / f"ai_business_newsletter_{stamp}.html"
+    email_path = OUTPUT_DIR / f"ai_business_newsletter_{stamp}_email.html"
     json_path = OUTPUT_DIR / f"ai_business_newsletter_agents_{stamp}.json"
     html = normalize_html_text(html)
+    email_html = normalize_html_text(email_html)
     html_path.write_text(html, encoding="utf-8")
+    email_path.write_text(email_html, encoding="utf-8")
     json_path.write_text(
         json.dumps(
             {
@@ -929,7 +1104,7 @@ def save_outputs(
         ),
         encoding="utf-8",
     )
-    return {"html": html_path, "json": json_path}
+    return {"html": html_path, "email_html": email_path, "json": json_path}
 
 
 def normalize_html_text(html: str) -> str:
@@ -1098,8 +1273,10 @@ def main() -> int:
     selected = rank_selected_items(selected)
     editor_plan = editor_agent(client, args.model, selected)
     html = render_html_newsletter(selected, editor_plan)
-    paths = save_outputs(html, grounded_output, summaries, critique, revised_summaries, editor_plan)
+    email_html = render_email_newsletter(selected, editor_plan)
+    paths = save_outputs(html, email_html, grounded_output, summaries, critique, revised_summaries, editor_plan)
     print(f"HTML newsletter: {paths['html']}")
+    print(f"Email HTML: {paths['email_html']}")
     print(f"Agent JSON: {paths['json']}")
     return 0
 

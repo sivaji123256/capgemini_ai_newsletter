@@ -774,6 +774,15 @@ def email_variant_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}_email.html")
 
 
+def resolve_email_html(source_path: Path, source_html: str) -> tuple[Path, str]:
+    if source_path.stem.endswith("_email"):
+        return source_path, source_html
+    sibling = email_variant_path(source_path)
+    if sibling.exists():
+        return sibling, sibling.read_text(encoding="utf-8")
+    return sibling, render_email_safe_html(source_html)
+
+
 def ensure_schema(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute(SCHEMA_SQL)
@@ -1064,9 +1073,9 @@ def main() -> int:
         recipients = active_recipients(conn)
 
         html_path, source_html = load_html(args.html)
-        email_html = render_email_safe_html(source_html)
-        email_path = email_variant_path(html_path)
-        email_path.write_text(email_html, encoding="utf-8")
+        email_path, email_html = resolve_email_html(html_path, source_html)
+        if not email_path.exists():
+            email_path.write_text(email_html, encoding="utf-8")
         subject = args.subject or subject_from_html(source_html, dt.date.today())
         issue = upsert_issue(conn, email_path, email_html, subject, approve=args.approve)
 
